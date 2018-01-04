@@ -13,337 +13,339 @@ The information contained in these materials is provided for informational purpo
 
 So far you have learned how to run applications using docker on your local machine, but what about running dockerized applications in production? There are a number of problems that come with building an application for production: scheduling services across distributed nodes, maintaining high availability, implementing reconciliation, scaling, and logging... just to name a few.
 
-There are several orchestration solutions out there that help you solve some of these problems. One example is the [IBM Bluemix Container Service](https://www.ibm.com/cloud-computing/bluemix/containers) which uses [Kubernetes](https://kubernetes.io/) to run containers in production. 
+There are several orchestration solutions out there that help you solve some of these problems. One example is the [IBM Cloud Container Service](https://www.ibm.com/cloud-computing/bluemix/containers) which uses [Kubernetes](https://kubernetes.io/) to run containers in production. Docker Swarm is another solution for container orchestration, that comes built-in to the Docker Engine. For this lab, we will be introducing concepts of container orchestration using vanilla Kubernetes.
 
-Before we introduce you to Kubernetes, we will teach you how to orchestrate applications using Docker Swarm. Docker Swarm is the orchestration tool that comes built-in to the Docker Engine.
-
-We will be using a few Docker commands in this lab. For full documentation on available commands check out the [official documentation](https://docs.docker.com/).
+In this lab, we will be using http://play-with-k8s.com, a free online tool that will allow you to quickly create a Kubernetes cluster without installing an extra tools. Optionally, you may want to explore [minikube](https://kubernetes.io/docs/tasks/tools/install-minikube/) for a local installation of Kubernetes, or the [IBM Cloud Container Service](https://www.ibm.com/cloud-computing/bluemix/containers) for a hosted solution.
 
 ## Prerequisites
 
-In order to complete a lab about orchestrating an application that is deployed across multiple hosts, you need... well, multiple hosts.  To make things easier, for this lab we will be using the multi-node support provided by http://play-with-docker.com. This is the easiest way to test out Docker Swarm, without having to deal with installing docker on multiple hosts yourself.
+In order to complete a lab about deploying an application that is deployed across multiple hosts, we will be using http://play-with-k8s.com. This is the easiest way to test out Kubernetes, without having to install any additional tools on your workstation.
 
-# Step 1: Create your first swarm
+# Step 1: Create your first Kubernetes cluster
 
-In this step, we will create our first swarm using play-with-docker.
-
-1. Navigate to http://play-with-docker.com
+1. Navigate to http://play-with-k8s.com and use your Github or Docker ID to login. Proceed to the main dashboard page.
 
 2. Click "add new instance" on the lefthand side three times to create three nodes
 
-Our first swarm cluster will have three nodes.
+Our first Kubernetes cluster will have three nodes.
 
-3. Initialize the swarm on node 1
+3. Initialize the master node (node1)
+Copy the first step for bootstrapping the cluster into the terminal for node 1.
 ```sh
-$ docker swarm init --advertise-addr eth0
-Swarm initialized: current node (vq7xx5j4dpe04rgwwm5ur63ce) is now a manager.
-
-To add a worker to this swarm, run the following command:
-
-    docker swarm join \
-    --token SWMTKN-1-50qba7hmo5exuapkmrj6jki8knfvinceo68xjmh322y7c8f0pj-87mjqjho30uue43oqbhhthjui \
-    10.0.120.3:2377
-
-To add a manager to this swarm, run 'docker swarm join-token manager' and follow the instructions.
+[node1 /]$ kubeadm init --apiserver-advertise-address $(hostname -i)
+Initializing machine ID from random generator.
+...
 ```
 
-You can think of docker swarm as a special "mode" that is activated by the command: `docker swarm init`. The `--advertise-addr` specifies the address in which the other nodes will use to join the swarm.
-
-This `docker swarm init` command generates a join token. The token makes sure that no malicious nodes join our swarm. We will need to use this token to join the other nodes to the swarm. For convenience, the output includes the full command `docker swarm join` which you can just copy/paste to the other nodes. 
-
-4. On both node2 and node3, copy and run the `docker swarm join` command that was outputted to YOUR console by the last command.
-
-You now have a three node swarm!
-
-5. Back on node1, run `docker node ls` to verify your 3 node cluster.
+Wait a minute until the process to initialize the cluster finishes. When it finishes, you should see output that looks like this:
 ```sh
-$ docker node ls
-ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS
-7x9s8baa79l29zdsx95i1tfjp     node3               Ready               Active
-x223z25t7y7o4np3uq45d49br     node2               Ready               Active
-zdqbsoxa6x1bubg3jyjdmrnrn *   node1               Ready               Active              Leader
+  kubeadm join --token 768017.3fe46b301dba4ce1 192.168.0.23:6443 --discovery-token-ca-cert-hash sha256:10d0c8cbca727e8988e50c94d4f330e9264166da6f0812e129cce50280967fb2
+```
+Take note of this output, we will be using that in the next step. But first, initialize networking for the cluster on node1. This was step 2 for the bootstrapping instructions displayed at the top of the console.
+
+```sh
+[node1 /]$ kubectl apply -n kube-system -f \
+>     "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 |tr -d '\n')"
+serviceaccount "weave-net" created
+clusterrole "weave-net" created
+clusterrolebinding "weave-net" created
+role "weave-net" created
+rolebinding "weave-net" created
+daemonset "weave-net" created
 ```
 
-This command outputs the three nodes in our swarm. The * next to the ID of the node represents the node that handled that specific command (`docker node ls` in this case).  
+4. Initialize the worker nodes (node2 and node3)
+Copy the `kubeadm join` command from node1 into the consoles for node2 and node3.
 
-Our node consists of  1 manager node and 2 workers nodes. Managers handle commands and manage the state of the swarm. Workers cannot handle commands and are simply used to run containers at scale. By default, managers are also used to run containers.
+On node2:
+```sh
+[node2 /]$ kubeadm join --token 768017.3fe46b301dba4ce1 192.168.0.23:6443 --discovery-token-ca-cert-hash sha256:10d0c8cbca727e8988e50c94d4f330e9264166da6f0812e129cce50280967fb2
+Initializing machine ID from random generator
+...
+```
 
-All `docker service` commands for the rest of this lab need to be executed on the manager node (Node1).
+On node3:
+```sh
+[node3 /]$ kubeadm join --token 768017.3fe46b301dba4ce1 192.168.0.23:6443 --discovery-token-ca-cert-hash sha256:10d0c8cbca727e8988e50c94d4f330e9264166da6f0812e129cce50280967fb2
+Initializing machine ID from random generator
+```
 
-**Note:** While we will control the Swarm directly from the node in which its running, you can control a docker swarm remotely by connecting to the docker engine of the manager via the remote API or activating a remote host from your local docker installation (using the `$DOCKER_HOST` and `$DOCKER_CERT_PATH` environment variables). This will become useful when you want to control production applications remotely instead of ssh-ing directly into production servers.
+4. Verify
+Once this is complete, click back to node1. Run `kubectl get nodes` and you should see all three nodes in your cluster. If they are in the `NotReady` state, wait a few seconds, then try again. Don't move to the next step until all three nodes have a `Ready` status.
+```sh
+[node1 /]$ kubectl get nodes
+NAME      STATUS    ROLES     AGE       VERSION
+node1     Ready     master    2m        v1.8.4
+node2     Ready     <none>    1m        v1.8.4
+node3     Ready     <none>    1m        v1.8.4
+```
 
-# Step 2: Deploy your first service
+You now have a three node Kubernetes cluster!
 
-Now that we have our 3 node Swarm cluster initialized, let's deploy some containers. To run containers on a Docker Swarm, we want to create a service. A service is an abstraction that represents multiple containers of the same image deployed across a distributed cluster.
+Our cluster consists of 1 master and 2 worker nodes. The master runs the API server that will handle commands and schedule workloads across the worker nodes in the cluster. For security reasons, masters will not run workloads themselves, but that is configurable.
 
-Let's do a simple example using Nginx. For now we will create a service with just 1 running container, but we will scale up later.
+All `kubectl` commands for the rest of this lab need to be executed directly on the master node (Node1).
+
+**Note:** While in this lab we will control the Kubernetes cluster directly from the master in which its running, the more likely usecase is that you control your Kubernetes cluster remotely by connecting the `kubectl` CLI client to your cluster remotely. This will become useful when you want to control production applications remotely instead of ssh-ing directly into production servers.
+
+# Step 2: Create a deployment 
+
+Now that we have our 3 node Kubernetes cluster initialized, let's deploy some containers. To run containers on a Kubernetes cluster, we want to create a deployment. A deployment is a Kubernetes object that manages multiple instances of a container of the same image deployed across a distributed cluster.
+
+Let's do a simple example using Nginx. For now we will create a deployment with just 1 running container, but we will scale up later.
  
-1. Deploy a service using Nginx
-```sh
-$ docker service create --detach=true --name nginx1 --publish 80:80  --mount source=/etc/hostname,target=/usr/share/nginx/html/index.html,type=bind,ro nginx:1.12
-pgqdxr41dpy8qwkn6qm7vke0q
-```
-
-This above statement is *declarative*, and docker swarm will actively try to maintain the state declared in this command unless explicitly changed via another `docker service` command. This behavior comes in handy when nodes go down, for example, and containers are automatically rescheduled on other nodes. We will see a demonstration of that a little later on in this lab.
-
-The `--mount` flag is a neat trick to have nginx print out the hostname of the node it's running on. This will come in handy later in this lab when we start load balancing between multiple containers of nginx that are distributed across different nodes in the cluster, and we want to see which node in the swarm is serving the request.
-
-We are using nginx tag "1.12" in this command. We will demonstrate a rolling update with version 1.13 later in this lab.
-
-The `--publish` command makes use of the swarm's built in *routing mesh*. In this case port 80 is exposed on *every node in the swarm*. The routing mesh will route a request coming in on port 80 to one of the nodes running the container.
-
-2. Inspect the service
-
-You can use `docker service ls` to inspect the service you just created.
+1. Create a deployment using Nginx version 1.12
 
 ```sh
-$ docker service ls
-ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
-pgqdxr41dpy8        nginx1              replicated          1/1                 nginx:1.12          *:80->80/tcp
+[node1 /]$ kubectl run nginx --image=nginx:1.12
+deployment "nginx" created
 ```
 
-3. Check out the running container of the service
+This command will create a deployment using the [nginx:1.12](https://hub.docker.com/_/nginx/) image from DockerHub. Our Kubernetes cluster is automatically configured to pull images from DockerHub, but we can configure other image registries such as a private registry you configure yourself.
 
-To take a deeper look at the running tasks, you can use `docker service ps`. A task is yet another abstraction using in docker swarm that represents the running instances of a service. In this case, there is a 1-1 mapping between a task and a container. 
+Verify your deployment by using `kubectl get deployments`.
 
 ```sh
-$ docker service ps nginx1
-ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STAT
-E           ERROR               PORTS
-iu3ksewv7qf9        nginx1.1            nginx:1.12          node1               Running             Running 8 mi
-nutes ago
+[node1 /]$ kubectl get deployments
+NAME      DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+nginx     1         1         1            1           16s
 ```
 
-If you happen to know which node your container is running on (you can see which node based on the output from `docker service ps`), you can use `docker container ls` to see the container running on that specific node.
+Behind the scenes, the deployment will create additional objects called "pods". Pods are the lowest unit of abstraction in Kubernetes nomenclature. They usually correspond 1-1 with a running container, but there are usecases for using more than one container per pod. More common patterns for multiple containers per pod, check out this [blog post](http://blog.kubernetes.io/2015/06/the-distributed-system-toolkit-patterns.html).
 
-4. Test the service
+Check out the pods that were created using `kubectl get pods`.
 
-Because of the routing mesh, we can send a request to any node of the swarm on port 80. This request will be automatically routed to the one node that is running our nginx container.
+``sh
+[node1 /]$ kubectl get pods
+NAME                     READY     STATUS    RESTARTS   AGE
+nginx-6ffcfd4fd6-826tg   1/1       Running   0          32s
+``
 
-Try this on each node:
+You should see one running pod. It may take a few minutes for that status to be "running". The node will need to download the nginx image to the machine, before running it, similar to the first time you ran a Docker container in Lab 1.
+
+You may notice a pattern using the `kubectl` CLI. So far we have used `kubectl get nodes`, `kubectl get deployments`, and `kubectl get pods`. You interact with Kubernetes by defining objects that you want to create. This objects are usually defined in a yaml file and passed to a `kubectl create` command, or in some cases can be created directly (such as when we ran `kubectl run` to create our deployment). Some objects, like the pods in our nginx deployment, are created and managed for us. While we can create these pod objects directly using `kubectl create` and passing in a yaml file for a pod definition, it usually makes sense to have kubernetes manage these lower level objects for us. For example, in the case of our deployment object, if the underlying pod goes down, our deployment object will automatically schedule a new pod in the cluster. For a full list of what objects you can define in Kubernetes, check out the official [Kubernetes API reference doc](https://kubernetes.io/docs/reference/).
+
+This last statement sheds light on an important feature of Kubernetes, and almost all container orchestration platforms in general. The objects that you create are done in a *declarative* fashion. Once you create an object, such as a deployment object, Kubernetes will actively monitor the desired state of the cluster, and reconcile if the actual state does not match the desired state e.g. if a pod in a deployment goes down, it will schedule a new pod. We will see a demonstration of that a little later on in this lab.
+
+
+# Step 3: Create a service
+
+Now that we have a nginx deployment, let's expose it to the outside world using a Kubernetes service using the `kubectl expose` command.
 
 ```sh
-$ curl localhost:80
-node1
+[node1 /]$ kubectl expose deployment/nginx --type="NodePort" --port=80
+service "nginx" exposed
 ```
 
-Curling will output the hostname where the container is running. For this example, it is running on "node1", but yours might be different.
-
-# Step 3: Scale your service
-
-In production we may need to handle large amounts of traffic to our application. So let's scale!
-
-1. Update your service with an updated number of replicas
-
-We are going to use the `docker service` command to update the nginx service we created earlier to include 5 replicas. This is defining a new state for our service.
+Verify that your service was creating using `kubectl get service`.
 ```sh
-$ docker service update --replicas=5 --detach=true nginx1
-nginx1
+[node1 /]$ kubectl get service
+NAME         TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE
+kubernetes   ClusterIP   10.96.0.1       <none>        443/TCP          35m
+nginx        NodePort    10.108.218.78   <none>        80:32612/TCP   1m
 ```
-As soon as this command is run the following happens:
-1) The state of the service is updated to 5 replicas (which is stored in the swarms internal storage).
-2) Docker swarm recognizes that the number of replicas that is scheduled now does not match the declared state of 5.
-3) Docker swarm schedules 5 more tasks (containers) in an attempt to meet the declared state for the service.
 
-This swarm is actively checking to see if the desired state is equal to actual state, and will attempt to reconcile if needed.
+Defining a service creates a stable endpoint that provides load balancing in front of a set of pods. Service endpoints will remain stable through updating a deployment. They can be used to expose applications within a cluster to each other privately (using `--type="ClusterIP"`) as well as to the outside worlds using the `NodePort` and `LoadBalancer` types. If you have `kube-dns` installed (play-with-k8s.com has it installed by default), then you will also get a DNS entry created in the internal Kubernetes DNS that is available to other Pods running in the cluster. Go [here](https://kubernetes.io/docs/concepts/services-networking/service/) to learn more about services.
 
-2. Check the running instances
+This command will create a link at the top of your screen in http://play-with-k8s.com. Click the link to access the nginx service.
 
-After a few seconds, you should see that the swarm did its job, and successfully started 9 more containers. Notice that the containers are scheduled across all three nodes of the cluster. The default placement strategy that is used to decide where new containers are to be run is "emptiest node", but that can be changed based on your need.
+![](images/play-with-k8s-link.png)
+
+# Step 4: Scale your app
+
+Right now, our nginx deployment is only running one instance of our application. 
 
 ```sh
-$ docker service ps nginx1
-ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STAT
-E            ERROR               PORTS
-iu3ksewv7qf9        nginx1.1            nginx:1.12          node1               Running             Running 17 m
-inutes ago
-lfz1bhl6v77r        nginx1.2            nginx:1.12          node2               Running             Running 6 mi
-nutes ago
-qururb043dwh        nginx1.3            nginx:1.12          node3               Running             Running 6 mi
-nutes ago
-q53jgeeq7y1x        nginx1.4            nginx:1.12          node3               Running             Running 6 mi
-nutes ago
-xj271k2829uz        nginx1.5            nginx:1.12          node1               Running             Running 7 mi
-nutes ago
+[node1 /]$ kubectl get deployment nginx
+NAME      DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+nginx     1         1         1            1           56m
 ```
 
-3. Send a bunch of requests to http://localhost:80
+Let's scale up so we can handle more traffic using `kubectl scale`.
 
-The `--publish 80:80` is still in effect for this service, that was not changed when we ran `docker service update`. However, now when we send requests on port 80, the routing mesh has multiple containers in which to route requests to. The routing mesh acts as a load balancer for these containers, alternating where it routes requests to. 
+```sh 
+[node1 /]$ kubectl scale --replicas=10 deployment nginx
+deployment "nginx" scaled
+```
 
-Let's try it out by curling multiple times. Note, that it doesn't matter which node you send the requests. There is no connection between the node that receives the request, and the node that that request is routed to.  
+You can check the deployment with `kubectl get deployment` or `kubectl get pods`.
 
 ```sh
-$ curl localhost:80
-node3
-$ curl localhost:80
-node3
-$ curl localhost:80
-node2
-$ curl localhost:80
-node1
-$ curl localhost:80
-node1
+[node1 /]$ kubectl get deployment nginx
+NAME      DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+nginx     10        10        10           10          1h
+[node1 /]$ kubectl get pods
+NAME                        READY     STATUS    RESTARTS   AGE
+nginx-6ffcfd4fd6-826tg      1/1       Running   0          1h
+nginx-6ffcfd4fd6-85gtl      1/1       Running   0          36s
+nginx-6ffcfd4fd6-92878      1/1       Running   0          36s
+nginx-6ffcfd4fd6-92pxz      1/1       Running   0          36s
+nginx-6ffcfd4fd6-b7bzd      1/1       Running   0          36s
+nginx-6ffcfd4fd6-kcppt      1/1       Running   0          36s
+nginx-6ffcfd4fd6-kdf7b      1/1       Running   0          36s
+nginx-6ffcfd4fd6-ndhxg      1/1       Running   0          36s
+nginx-6ffcfd4fd6-ngjx7      1/1       Running   0          36s
 ```
 
-You should see which node is serving each request because of the nifty `--mount` command we used earlier.
+We scaled our deployment using the `kubectl scale` command, but you can also scale your application using a yaml file. Edit the `spec.replicas` field in your yaml file and apply changes using `kubectl apply -f [file name]`, or edit the yaml file directly in Kubernetes using `kubectl edit deployment nginx`.
 
-**Limits of the routing Mesh**
-The routing mesh can only publish one service on port 80. If you want multiple services exposed on port 80, then you can use an external application load balancer outside of the swarm to accomplish this.
+# Step 5: Rolling updates
 
-4. Check the aggregated logs for the service
-
-Another easy way to see which nodes those requests were routed to is to check the aggregated logs. We can get aggregated logs for the service using `docker service logs [service name]`. This aggregates the output from every running container, i.e. the output from `docker container logs [container name]`.
+Let's update to version 1.13 of nginx by using `kubectl set`.
 
 ```sh
-$ docker service logs nginx1
-nginx1.4.q53jgeeq7y1x@node3    | 10.255.0.2 - - [28/Jun/2017:18:59:39 +0000] "GET / HTTP/1.1" 200 6 "-" "curl/7.
-52.1" "-"
-nginx1.2.lfz1bhl6v77r@node2    | 10.255.0.2 - - [28/Jun/2017:18:59:40 +0000] "GET / HTTP/1.1" 200 6 "-" "curl/7.
-52.1" "-"
-nginx1.5.xj271k2829uz@node1    | 10.255.0.2 - - [28/Jun/2017:18:59:41 +0000] "GET / HTTP/1.1" 200 6 "-" "curl/7.
-52.1" "-"
-nginx1.1.iu3ksewv7qf9@node1    | 10.255.0.2 - - [28/Jun/2017:18:50:23 +0000] "GET / HTTP/1.1" 200 6 "-" "curl/7.
-52.1" "-"
-nginx1.1.iu3ksewv7qf9@node1    | 10.255.0.2 - - [28/Jun/2017:18:59:41 +0000] "GET / HTTP/1.1" 200 6 "-" "curl/7.
-52.1" "-"
-nginx1.3.qururb043dwh@node3    | 10.255.0.2 - - [28/Jun/2017:18:59:38 +0000] "GET / HTTP/1.1" 200 6 "-" "curl/7.
-52.1" "-"
+[node1 /]$ kubectl set image deployment/nginx nginx=nginx:1.13
+deployment "nginx" image updated
 ```
-Based on these logs we can see that each request was served by a different container.
 
-In addition to seeing whether the request was sent to node1, node2, or node3, you can also see which container on each node that it was sent to. For example `nginx1.5` means that request was sent to container with that same name as indicated in the output of `docker service ps nginx1`.
+Quickly use the `kubectl rollout` command to see the rolling update in action:
+```sh
+[node1 /]$ kubectl rollout status deployment nginx
+Waiting for rollout to finish: 4 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 4 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 4 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 4 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 5 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 5 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 5 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 6 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 6 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 6 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 7 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 7 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 7 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 7 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 7 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 8 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 8 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 8 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 9 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 9 out of 10 new replicas have been updated...
+Waiting for rollout to finish: 1 old replicas are pending termination...
+Waiting for rollout to finish: 1 old replicas are pending termination...
+Waiting for rollout to finish: 1 old replicas are pending termination...
+Waiting for rollout to finish: 1 old replicas are pending termination...
+Waiting for rollout to finish: 9 of 10 updated replicas are available...
+deployment "nginx" successfully rolled out
+```
 
-# Step 4: Rolling Updates
+Similar to changing the number of replicas when we scale up, we can update the deployment by updating the corresponding yaml file and running `kubectl apply`. In fact, that is probably a more likely scenario because you will be using version control for the yaml file that defines your deployment object. Changing anything under `spec.template` in a deployment object will trigger a rolling update.
 
-Now that we have our service deployed, let's demonstrate a release of our application. We are going to update the version of Nginx to version "1.13". To do this update we are going to use the `docker service update` command.
+During the rolling update, Kubernetes is replacing the running replicas while maintaining the correct number of replicas in the deployment plus or minus 1 pod (the plus or minus number is configurable to allow for faster updates). We can see this by running `kubectl get pods` command. In fact, let's rollback to the previous version so we can see the rollout in action. Run the following two commands in quick succession:
 
 ```sh
-$ docker service update --image nginx:1.13 --detach=true nginx1
+[node1 /]$ kubectl rollout undo deployment nginx
+deployment "nginx" rolled back
+[node1 /]$ watch kubectl get pods
+Every 2.0s: kubectl get pods                                                                                                         Thu Jan  4 15:27:09 2018
+
+NAME                     READY     STATUS              RESTARTS   AGE
+nginx-6ffcfd4fd6-88q8s   0/1       Terminating         0          5m
+nginx-6ffcfd4fd6-kngdv   1/1       Running             0          5m
+nginx-6ffcfd4fd6-pk7bj   1/1       Running             0          5m
+nginx-6ffcfd4fd6-pkkph   1/1       Running             0          5m
+nginx-6ffcfd4fd6-tbcz9   0/1       Terminating         0          5m
+nginx-6ffcfd4fd6-w4skt   0/1       Terminating         0          5m
+nginx-778bbb6b8c-5m7h5   0/1       ContainerCreating   0          3s
+nginx-778bbb6b8c-6lrxv   1/1       Running             0          6s
+nginx-778bbb6b8c-d9njv   1/1       Running             0          8s
+nginx-778bbb6b8c-jdhh4   1/1       Running             0          7s
+nginx-778bbb6b8c-tr7cr   1/1       Running             0          8s
+nginx-778bbb6b8c-vg8zd   1/1       Running             0          7s
+nginx-778bbb6b8c-whqp8   1/1       Running             0          5s
+nginx-778bbb6b8c-xhwtw   0/1       ContainerCreating   0          3s
 ```
 
-This will trigger a rolling update of the swarm. Quickly type in `docker service ps nginx1` over and over to see the updates in real time.
+Kubernetes keeps a history of each rollout, which you can access by running `kubectl rollout history deployment nginx`. Rollback to a specific version using `kubectl rollout undo deployment nginx --to-revision=[revision number]`.
 
-You can fine tune the rolling update using these options:
-`--update-parallelism` will dictate the number of containers to update at once. (defaults to 1)
-`--update-delay` will dictate the delay between finishing updating a set of containers before moving on to the next set.
 
-After a few seconds, run `docker service ps nginx1` to see all the images have been updated to nginx:1.13. 
+# Step 6: Reconcilation
+
+The nginx deployment object we created is declarative, meaning that we defined the desired state, and Kubernetes will attempt to match that. Our deployment object is defined with 10 replicas, that are spread out on our two worker nodes. Let's find out what happens when we delete all of our pods manually.
+
+Delete all the pods:
 
 ```sh
-$ docker service ps nginx1
-ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STAT
-E             ERROR               PORTS
-di2hmdpw0j0z        nginx1.1            nginx:1.13          node1               Running             Running 50 s
-econds ago
-iu3ksewv7qf9         \_ nginx1.1        nginx:1.12          node1               Shutdown            Shutdown 52
-seconds ago
-qsk6gw43fgfr        nginx1.2            nginx:1.13          node2               Running             Running 47 s
-econds ago
-lfz1bhl6v77r         \_ nginx1.2        nginx:1.12          node2               Shutdown            Shutdown 49
-seconds ago
-r4429oql42z9        nginx1.3            nginx:1.13          node3               Running             Running 41 s
-econds ago
-qururb043dwh         \_ nginx1.3        nginx:1.12          node3               Shutdown            Shutdown 43
-seconds ago
-jfkepz8tqy9g        nginx1.4            nginx:1.13          node2               Running             Running 44 s
-econds ago
-q53jgeeq7y1x         \_ nginx1.4        nginx:1.12          node3               Shutdown            Shutdown 45
-seconds ago
-n15o01ouv2uf        nginx1.5            nginx:1.13          node3               Running             Running 39 s
-econds ago
-xj271k2829uz         \_ nginx1.5        nginx:1.12          node1               Shutdown            Shutdown 40
-seconds ago
+[node1 /]$ kubectl delete pods -l run=nginx
+pod "nginx-778bbb6b8c-449cw" deleted
+pod "nginx-778bbb6b8c-5m7h5" deleted
+pod "nginx-778bbb6b8c-6lrxv" deleted
+pod "nginx-778bbb6b8c-d9njv" deleted
+pod "nginx-778bbb6b8c-jdhh4" deleted
+pod "nginx-778bbb6b8c-mgt5f" deleted
+pod "nginx-778bbb6b8c-tr7cr" deleted
+pod "nginx-778bbb6b8c-vg8zd" deleted
+pod "nginx-778bbb6b8c-whqp8" deleted
+pod "nginx-778bbb6b8c-xhwtw" deleted
 ```
 
-You have successfully updated your app to the latest version of nginx!
-
-# Step 5: Reconciliation
-
-In the previous step, we updated the state of our service using `docker service update`. We saw Docker Swarm in action as it recognized the mismatch between desired state and actual state, and attempted to solve this issue. 
-
-The "inspect->adapt" model of docker swarm enables it to perform reconciliation when something goes wrong. For example, when a node in the swarm goes down it might take down running containers with it. The swarm will recognize this loss of containers, and will attempt to reschedule containers on available nodes in order to achieve the desired state for that service.
- 
-We are going to remove a node, and see tasks of our nginx1 service be rescheduled on other nodes automatically.
-
-1. For the sake of clean output, first create a brand new service by copying the line below. We will change the name, and the publish port to avoid conflicts with our existing service. We will also add the `--replicas` command to scale the service with 5 instances.
+Right away, you'll notice that Kubernetes will start to create containers that have been deleted.
 
 ```sh
-$ docker service create --detach=true --name nginx2 --replicas=5 --publish 81:80  --mount source=/etc/hostname,target=/usr/share/nginx/html/index.html,type=bind,ro nginx:1.12
-aiqdh5n9fyacgvb2g82s412js
+[node1 /]$ kubectl get pods
+NAME                     READY     STATUS              RESTARTS   AGE
+nginx-778bbb6b8c-449cw   1/1       Terminating         0          21m
+nginx-778bbb6b8c-4w969   0/1       ContainerCreating   0          5s
+nginx-778bbb6b8c-5m7h5   1/1       Terminating         0          22m
+nginx-778bbb6b8c-6lrxv   1/1       Terminating         0          22m
+nginx-778bbb6b8c-crdrq   0/1       ContainerCreating   0          6s
+nginx-778bbb6b8c-d9fg4   0/1       Pending             0          4s
+nginx-778bbb6b8c-d9njv   1/1       Terminating         0          22m
+nginx-778bbb6b8c-jdhh4   1/1       Terminating         0          22m
+nginx-778bbb6b8c-kdsvb   0/1       ContainerCreating   0          6s
+nginx-778bbb6b8c-kpmmp   0/1       Pending             0          4s
+nginx-778bbb6b8c-ksrhk   0/1       Pending             0          5s
+nginx-778bbb6b8c-mcptx   0/1       ContainerCreating   0          6s
+nginx-778bbb6b8c-mf8sc   0/1       ContainerCreating   0          6s
+nginx-778bbb6b8c-mgt5f   1/1       Terminating         0          22m
+nginx-778bbb6b8c-tr7cr   1/1       Terminating         0          22m
+nginx-778bbb6b8c-vg8zd   1/1       Terminating         0          22m
+nginx-778bbb6b8c-vz9qm   0/1       Pending             0          5s
+nginx-778bbb6b8c-vztkk   0/1       ContainerCreating   0          6s
+nginx-778bbb6b8c-whqp8   1/1       Terminating         0          22m
+nginx-778bbb6b8c-xhwtw   1/1       Terminating         0          22m
 ```
 
-2. On Node1, use `watch` to watch the update from the output of `docker service ps`. Note "watch" is a linux utility and might not be available on other platforms.
+After a few seconds, the new pods should be up and running, replacing the old pods that have been deleted, and keeping our deployment object in the correct state.
+
 ```sh
-$ watch -n 1 docker service ps nginx2
+[node1 /]$ kubectl get pods
+NAME                     READY     STATUS    RESTARTS   AGE
+nginx-778bbb6b8c-449cw   1/1       Running   0          1m
+nginx-778bbb6b8c-4w969   1/1       Running   0          1m
+nginx-778bbb6b8c-5m7h5   1/1       Running   0          1m
+nginx-778bbb6b8c-crdrq   1/1       Running   0          2m
+nginx-778bbb6b8c-d9fg4   1/1       Running   0          1m
+nginx-778bbb6b8c-kdsvb   1/1       Running   0          2m
+nginx-778bbb6b8c-kpmmp   1/1       Running   0          1m
+nginx-778bbb6b8c-ksrhk   1/1       Running   0          1m
+nginx-778bbb6b8c-mcptx   1/1       Running   0          2m
+nginx-778bbb6b8c-mf8sc   1/1       Running   0          2m
+nginx-778bbb6b8c-tr7cr   1/1       Running   0          1m
+nginx-778bbb6b8c-vg8zd   1/1       Running   0          1m
+nginx-778bbb6b8c-vz9qm   1/1       Running   0          1m
+nginx-778bbb6b8c-vztkk   1/1       Running   0          2m
+nginx-778bbb6b8c-whqp8   1/1       Running   0          1m
 ```
-This should result in a window that looks like this:
+
+# Clean up
+To clean up using http://play-with-k8s.com, simply close the browser. You can delete objects manually using the `kubectl delete [object type] [object name]`. 
+
+For example:
+
 ```sh
-Every 1s: docker service ps nginx1 2                                                                                              2017-05-12 15:29:20
-
-ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STAT
-E            ERROR               PORTS
-6koehbhsfbi7         nginx2.1        nginx:1.12          node3               Running            Running 21 s
-econds ago
-dou2brjfr6lt        nginx2.2            nginx:1.12          node1               Running             Running 26 s
-econds ago
-8jc41tgwowph        nginx2.3            nginx:1.12          node2               Running             Running 27 s
-econds ago
-n5n8zryzg6g6        nginx2.4            nginx:1.12          node1               Running             Running 26 s
-econds ago
-cnofhk1v5bd8        nginx2.5            nginx:1.12          node2               Running             Running 27 s
-econds ago
-[node1] (loc
+[node1 /]$ kubectl delete service nginx
+service "nginx" deleted
 ```
-
-3. Click on Node3, and type the command to leave the swarm cluster.
-```sh
-$ docker swarm leave
-```
-This is the "nice" way to leave the swarm, but you can also kill the node and the following behavior will be the same.
-
-4. Click on Node1 to watch the reconciliation in action. You should see that the swarm will attempt to get back to the declared state by rescheduling the containers that were running on node3 to node1 and node2 automatically.
-```sh
-$ docker service ps nginx2
-ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STAT
-E            ERROR               PORTS
-jeq4604k1v9k        nginx2.1            nginx:1.12          node1               Running             Running 5 se
-conds ago
-6koehbhsfbi7         \_ nginx2.1        nginx:1.12          node3               Shutdown            Running 21 s
-econds ago
-dou2brjfr6lt        nginx2.2            nginx:1.12          node1               Running             Running 26 s
-econds ago
-8jc41tgwowph        nginx2.3            nginx:1.12          node2               Running             Running 27 s
-econds ago
-n5n8zryzg6g6        nginx2.4            nginx:1.12          node1               Running             Running 26 s
-econds ago
-cnofhk1v5bd8        nginx2.5            nginx:1.12          node2               Running             Running 27 s
-econds ago
-[node1] (loc
-```
-
-# How many nodes?
-In this lab, our Docker Swarm cluster consists of one master, and two worker nodes. This configuration is not highly available. The manager node contains the necessary information to manage the cluster, so if this node goes down, the cluster will cease to function. For a production application, you will want to provision a cluster with multiple manager nodes to allow for manager node failures.
-
-For manager nodes you want at least 3, but typically no more than 7. Managers implement the raft consensus algorithm, which requires that more than 50% of the nodes agree on the state that is being stored for the cluster. If you don't achieve >50%, the swarm will cease to operate correctly. For this reason, the following can be assumed about node failure tolerance.
-
-- 3 manager nodes tolerates 1 node failure 
-- 5 manager nodes tolerates 2 node failures
-- 7 manager nodes tolerates 3 node failures
-
-It is possible to have an even number of manager nodes, but it adds no value in terms of the number of node failures. For example, 4 manager nodes would only tolerate 1 node failure, which is the same tolerance as a 3 manager node cluster. The more manager nodes you have, the harder it is to achieve a consensus on the state of a cluster.
-
-While you typically want to limit the number of manager nodes to no more than 7, you can scale the number of worker nodes much higher than that. Worker nodes can scale up into the 1000's of nodes. Worker nodes communicate using the gossip protocol, which is optimized to be highly performant under large traffic and a large number of nodes.
-
-If you are using http://play-with-docker.com, you can easily deploy multiple manager node clusters using the built in templates. Click the templates icon in the upper left to see what templates are available.
 
 # Summary
 
-In this lab, you got an introduction to problems that come with running container with production such as scheduling services across distributed nodes, maintaining high availability, implementing reconciliation, scaling, and logging. We used the orchestration tool that comes built-in to the Docker Engine- Docker Swarm, to address some of these issues.
+In this lab, you got an introduction to problems that come with running container with production such as scheduling services across distributed nodes, maintaining high availability, implementing reconciliation, scaling, and logging. We used Kubernetes as our container orchestration tool to address some of these issues.
 
 Key Takeaways
-- The Docker Swarm schedules services using a declarative language. You declare the state, and the swarm attempts to maintain and reconcile to make sure the actual state == desired state
-- Docker Swarm is composed of manager and worker nodes. Only managers can maintain the state of the swarm and accept commands to modify it. Workers have high scability and are only  used to run containers. By default managers can run containers as well.
-- The routing mesh built into swarm means that any port that is published at the service level will be exposed on every node in the swarm. Requests to a published service port will be routed automatically to a container of the service that is running in the swarm.
-- Many tools out there exist to help solve problems with orchestration containerized applications in production, include Docker Swarm, and the [IBM Bluemix Container Service](https://www.ibm.com/cloud-computing/bluemix/containers).
+- You interact with Kubernetes using objects, such as deployments and services. You will likely define this objects in yaml files, and save those files in your version control.
+- Objects are defined in Kubernetes declaratively. You declare the state the object should maintain, and Kubernetes will attempts to maintain that state.
+- Kubernetes deployment objects manage containers with multiple replicas (pods) and also support rolling updates. Kubernetes service objects provide a single endpoint (public or private) and load balances across a set of pods.
+- There are many tools out there to help you run Kubernetes in production such as the [IBM Cloud Container Service](https://www.ibm.com/cloud-computing/bluemix/containers).
+- Explore the [official Kubernetes docs](https://kubernetes.io/docs/home/) to go deeper into Kubernetes
 
